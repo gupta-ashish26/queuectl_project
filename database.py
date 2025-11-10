@@ -31,6 +31,75 @@ def create_tables():
     conn.commit()
     conn.close()
     print("Tables created successfully (if they didn't exist).")
+    
+def fetch_job_to_run():
+    conn = None
+    job = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("BEGIN IMMEDIATE")
+        
+        cursor.execute(
+            """
+            SELECT * FROM jobs
+            WHERE state = 'pending' AND run_at <= DATETIME('now')
+            ORDER BY created_at
+            LIMIT 1
+            """
+        )
+        job = cursor.fetchone()
+        
+        if job:
+            cursor.execute(
+                """
+                UPDATE jobs
+                SET state = 'processing', updated_at = DATETIME('now')
+                WHERE id = ?
+                """,
+                (job['id'],)
+            )
+            conn.commit() 
+        else:
+            conn.commit() 
+            
+    except Exception as e:
+        print(f"Error fetching job: {e}")
+        if conn:
+            conn.rollback() 
+    finally:
+        if conn:
+            conn.close()
+            
+    return dict(job) if job else None
+
+def update_job_status(job_id, state, attempts=None):
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    if attempts is not None:
+        cursor.execute(
+            """
+            UPDATE jobs
+            SET state = ?, attempts = ?, updated_at = DATETIME('now')
+            WHERE id = ?
+            """,
+            (state, attempts, job_id)
+        )
+    else:
+        cursor.execute(
+            """
+            UPDATE jobs
+            SET state = ?, updated_at = DATETIME('now')
+            WHERE id = ?
+            """,
+            (state, job_id)
+        )
+    
+    conn.commit()
+    conn.close()
 
 if __name__ == "__main__":
     create_tables()

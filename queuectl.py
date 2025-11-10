@@ -3,6 +3,9 @@ import json
 import uuid
 import sqlite3
 from database import get_db_connection, create_tables
+import subprocess
+import time
+from database import get_db_connection, create_tables, fetch_job_to_run, update_job_status
 
 create_tables() 
 
@@ -80,5 +83,64 @@ def list(state):
         click.echo(f"{job['id']:<36} | {job['command']:<25} | {job['attempts']:<10}")
 
 
+@cli.group()
+def worker():
+    pass
+
+def _run_job(job):
+    job_id = job['id']
+    command = job['command']
+    
+    click.echo(f"Running job {job_id}: {command}")
+    
+    try:
+        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=300)
+        
+        # --- Handle Job Success ---
+        if result.returncode == 0:
+            click.echo(click.style(f"Job {job_id} completed successfully.", fg='green'))
+            update_job_status(job_id, 'completed')
+        
+        # --- Handle Job Failure ---
+        else:
+            click.echo(click.style(f"Job {job_id} failed.", fg='red'))
+            new_attempts = job['attempts'] + 1
+            update_job_status(job_id, 'failed', new_attempts)
+            
+            click.echo(f"  Error: {result.stderr}")
+
+    except subprocess.TimeoutExpired:
+        click.echo(click.style(f"Job {job_id} timed out.", fg='red'))
+        new_attempts = job['attempts'] + 1
+        update_job_status(job_id, 'failed', new_attempts)
+
+    except Exception as e:
+        click.echo(click.style(f"Job {job_id} failed with unexpected error: {e}", fg='red'))
+        new_attempts = job['attempts'] + 1
+        update_job_status(job_id, 'failed', new_attempts)
+
+
+@worker.command()
+@click.option('--count', default=1, help='Number of workers to start (we will implement this in a later phase).')
+def start(count):
+    
+    if count > 1:
+        click.echo("Note: Multi-worker is not implemented yet. Starting 1 worker.")
+    
+    click.echo("Starting worker... Press Ctrl+C to stop.")
+    
+    try:
+        while True:
+            job = fetch_job_to_run()
+            
+            if job:
+                _run_job(job)
+            else:
+                click.echo("No pending jobs. Waiting...")
+                time.sleep(5) # Wait 5 seconds
+                
+    except KeyboardInterrupt:
+        click.echo("\nShutting down worker...")
+        
 if __name__ == "__main__":
     cli()
