@@ -139,6 +139,23 @@ def retry_dlq_job(job_id):
     else:
         conn.close()
         return False
+
+def get_status_summary():
+    conn = get_db_connection()
+    cursor = conn.cursor()
     
+    cursor.execute("SELECT state, COUNT(*) as count FROM jobs GROUP BY state")
+    rows = cursor.fetchall()
+    
+    conn.close()
+    
+    summary = {row['state']: row['count'] for row in rows}
+    
+    all_states = ['pending', 'processing', 'completed', 'failed', 'dead']
+    for state in all_states:
+        summary.setdefault(state, 0)
+        
+    return summary
+  
 if __name__ == "__main__":
     create_tables()

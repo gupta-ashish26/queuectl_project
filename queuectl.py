@@ -7,10 +7,11 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from database import (
-    get_db_connection, create_tables, fetch_job_to_run, update_job_status, update_job_for_retry, retry_dlq_job
+    get_db_connection, create_tables, fetch_job_to_run, update_job_status, update_job_for_retry, 
+    retry_dlq_job, get_status_summary
 )
+from config import set_config_value, get_config_value
 
-BACKOFF_BASE = 3
 
 create_tables() 
 
@@ -35,7 +36,8 @@ def enqueue(job_spec):
 
     job_id = data.get('id', str(uuid.uuid4()))
     command = data['command']
-    max_retries = data.get('max_retries', 3)
+    default_retries = get_config_value('max_retries')
+    max_retries = data.get('max_retries', default_retries)
 
     # --- Database Insertion ---
     try:
@@ -87,6 +89,20 @@ def list(state):
     for job in jobs:
         click.echo(f"{job['id']:<36} | {job['command']:<25} | {job['attempts']:<10}")
 
+@cli.command()
+def status():
+    """Show a summary of all job states."""
+
+    summary = get_status_summary()
+
+    click.echo(click.style("--- Job Queue Status ---", bold=True))
+    click.echo(f"  Pending:    {summary['pending']}")
+    click.echo(f"  Processing: {summary['processing']}")
+    click.echo(f"  Completed:  {summary['completed']}")
+    click.echo(f"  Failed:     {summary['failed']}")
+    click.echo(f"  Dead:       {summary['dead']}")
+    click.echo("-------------------------")
+    click.echo(f"  Total:      {sum(summary.values())}")
 
 @cli.group()
 def worker():
@@ -101,7 +117,8 @@ def _handle_job_failure(job, error_message=""):
         click.echo(f"  Error: {error_message.strip()}")
 
     if new_attempts <= job['max_retries']:
-        delay_seconds = BACKOFF_BASE ** new_attempts
+        backoff_base = get_config_value('backoff_base')
+        delay_seconds = backoff_base ** new_attempts
         run_at_dt = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
         run_at_sql_format = run_at_dt.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -202,5 +219,11 @@ def dlq_retry(job_id):
     else:
         click.echo(click.style(f"Error: Job {job_id} not found in DLQ.", fg='red'))
 
+@cli.command()
+@click.argument('key')
+@click.argument('value')
+def config(key, value):
+    set_config_value(key, value)
+    
 if __name__ == "__main__":
     cli()
