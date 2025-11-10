@@ -6,7 +6,9 @@ from database import get_db_connection, create_tables
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
-from database import get_db_connection, create_tables, fetch_job_to_run, update_job_status, update_job_for_retry
+from database import (
+    get_db_connection, create_tables, fetch_job_to_run, update_job_status, update_job_for_retry, retry_dlq_job
+)
 
 BACKOFF_BASE = 3
 
@@ -161,6 +163,44 @@ def start(count):
                 
     except KeyboardInterrupt:
         click.echo("\nShutting down worker...")
-        
+
+@cli.group()
+def dlq():
+    pass
+
+@dlq.command(name='list')
+def dlq_list():
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM jobs WHERE state = 'dead'")
+    jobs = cursor.fetchall()
+    
+    conn.close()
+    
+    if not jobs:
+        click.echo("Dead Letter Queue is empty.")
+        return
+
+    click.echo(f"--- Jobs in 'dead' state ---")
+    header = f"{'ID':<36} | {'COMMAND':<25} | {'ATTEMPTS':<10}"
+    click.echo(click.style(header, bold=True))
+    click.echo("-" * (36 + 3 + 25 + 3 + 10))
+    
+    for job in jobs:
+        click.echo(f"{job['id']:<36} | {job['command']:<25} | {job['attempts']:<10}")
+
+@dlq.command(name='retry')
+@click.argument('job_id')
+def dlq_retry(job_id):
+    
+    success = retry_dlq_job(job_id)
+    
+    if success:
+        click.echo(click.style(f"Job {job_id} has been moved back to 'pending' queue.", fg='green'))
+    else:
+        click.echo(click.style(f"Error: Job {job_id} not found in DLQ.", fg='red'))
+
 if __name__ == "__main__":
     cli()

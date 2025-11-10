@@ -117,5 +117,28 @@ def update_job_for_retry(job_id, new_attempts, run_at_iso):
     conn.commit()
     conn.close()
 
+def retry_dlq_job(job_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM jobs WHERE id = ? AND state = 'dead'", (job_id,))
+    job = cursor.fetchone()
+    
+    if job:
+        cursor.execute(
+            """
+            UPDATE jobs
+            SET state = 'pending', attempts = 0, run_at = DATETIME('now')
+            WHERE id = ?
+            """,
+            (job_id,)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    else:
+        conn.close()
+        return False
+    
 if __name__ == "__main__":
     create_tables()
