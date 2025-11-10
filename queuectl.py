@@ -11,6 +11,9 @@ from database import (
     retry_dlq_job, get_status_summary
 )
 from config import set_config_value, get_config_value
+import multiprocessing
+import os
+import sys
 
 
 create_tables() 
@@ -158,28 +161,46 @@ def _run_job(job):
         # Catch other unexpected errors during execution
         _handle_job_failure(job, f"Unexpected error: {e}")
 
+def run_worker_loop():
+    worker_pid = os.getpid()
+    click.echo(f"Worker process started (PID: {worker_pid})")
 
-@worker.command()
-@click.option('--count', default=1, help='Number of workers to start (we will implement this in a later phase).')
-def start(count):
-    
-    if count > 1:
-        click.echo("Note: Multi-worker is not implemented yet. Starting 1 worker.")
-    
-    click.echo("Starting worker... Press Ctrl+C to stop.")
-    
     try:
         while True:
             job = fetch_job_to_run()
-            
+
             if job:
+                click.echo(f"[PID {worker_pid}] ", nl=False) # Add PID to log
                 _run_job(job)
             else:
-                click.echo("No pending jobs. Waiting...")
+                click.echo(".", nl=False) 
                 time.sleep(5) # Wait 5 seconds
-                
+
     except KeyboardInterrupt:
-        click.echo("\nShutting down worker...")
+        click.echo(f"\nShutting down worker (PID: {worker_pid})...")
+        sys.exit(0)
+
+@worker.command()
+@click.option('--count', default=1, help='Number of workers to start')
+def start(count):
+    click.echo(f"Starting {count} worker process(es)... Press Ctrl+C to stop all.")
+
+    processes = []
+
+    for _ in range(count):
+        proc = multiprocessing.Process(target=run_worker_loop, daemon=True)
+        proc.start()
+        processes.append(proc)
+
+    try:
+        for proc in processes:
+            proc.join()
+
+    except KeyboardInterrupt:
+        click.echo(click.style("\n! Received shutdown signal. Terminating all workers...", fg='yellow'))
+        for proc in processes:
+            proc.terminate()
+        click.echo("All workers shut down.")
 
 @cli.group()
 def dlq():
