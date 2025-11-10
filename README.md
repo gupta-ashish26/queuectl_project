@@ -19,10 +19,9 @@ Follow these steps to set up and run the project locally.
 
 1.  **Clone the Repository**
     ```bash
-    git clone https://github.com/YourUsername/queuectl_project.git
+    git clone https://github.com/gupta-ashish26/queuectl_project.git
     cd queuectl_project
     ```
-    *(Replace with your repository's URL)*
 
 2.  **Create and Activate a Virtual Environment**
     ```bash
