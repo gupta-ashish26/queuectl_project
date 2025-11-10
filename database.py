@@ -101,5 +101,21 @@ def update_job_status(job_id, state, attempts=None):
     conn.commit()
     conn.close()
 
+def update_job_for_retry(job_id, new_attempts, run_at_iso):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(
+        """
+        UPDATE jobs
+        SET state = 'pending', attempts = ?, run_at = ?, updated_at = DATETIME('now')
+        WHERE id = ?
+        """,
+        (new_attempts, run_at_iso, job_id)
+    )
+    
+    conn.commit()
+    conn.close()
+
 if __name__ == "__main__":
     create_tables()

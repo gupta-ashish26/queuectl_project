@@ -5,7 +5,10 @@ import sqlite3
 from database import get_db_connection, create_tables
 import subprocess
 import time
-from database import get_db_connection, create_tables, fetch_job_to_run, update_job_status
+from datetime import datetime, timedelta, timezone
+from database import get_db_connection, create_tables, fetch_job_to_run, update_job_status, update_job_for_retry
+
+BACKOFF_BASE = 3
 
 create_tables() 
 
@@ -87,37 +90,54 @@ def list(state):
 def worker():
     pass
 
+def _handle_job_failure(job, error_message=""):
+    job_id = job['id']
+    new_attempts = job['attempts'] + 1
+
+    click.echo(click.style(f"Job {job_id} failed.", fg='red'))
+    if error_message:
+        click.echo(f"  Error: {error_message.strip()}")
+
+    if new_attempts <= job['max_retries']:
+        delay_seconds = BACKOFF_BASE ** new_attempts
+        run_at_dt = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
+        run_at_sql_format = run_at_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        click.echo(f"  Retrying job... Attempt {new_attempts} of {job['max_retries']}.")
+        click.echo(f"  Next run at: {run_at_sql_format} (in {delay_seconds}s)")
+
+        update_job_for_retry(job_id, new_attempts, run_at_sql_format)
+
+    else:
+        click.echo(click.style(f"  Job has reached max retries ({job['max_retries']}).", fg='yellow'))
+        click.echo(click.style(f"  Moving job {job_id} to Dead Letter Queue.", fg='yellow'))
+
+        update_job_status(job_id, 'dead', new_attempts)
+        
 def _run_job(job):
     job_id = job['id']
     command = job['command']
-    
+
     click.echo(f"Running job {job_id}: {command}")
-    
+
     try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=300)
-        
+        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=300) # 5-min timeout
+
         # --- Handle Job Success ---
         if result.returncode == 0:
             click.echo(click.style(f"Job {job_id} completed successfully.", fg='green'))
             update_job_status(job_id, 'completed')
-        
+
         # --- Handle Job Failure ---
         else:
-            click.echo(click.style(f"Job {job_id} failed.", fg='red'))
-            new_attempts = job['attempts'] + 1
-            update_job_status(job_id, 'failed', new_attempts)
-            
-            click.echo(f"  Error: {result.stderr}")
+            _handle_job_failure(job, result.stderr)
 
     except subprocess.TimeoutExpired:
-        click.echo(click.style(f"Job {job_id} timed out.", fg='red'))
-        new_attempts = job['attempts'] + 1
-        update_job_status(job_id, 'failed', new_attempts)
+        _handle_job_failure(job, "Job timed out after 300 seconds.")
 
     except Exception as e:
-        click.echo(click.style(f"Job {job_id} failed with unexpected error: {e}", fg='red'))
-        new_attempts = job['attempts'] + 1
-        update_job_status(job_id, 'failed', new_attempts)
+        # Catch other unexpected errors during execution
+        _handle_job_failure(job, f"Unexpected error: {e}")
 
 
 @worker.command()
